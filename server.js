@@ -5,7 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const crypto = require('crypto');
-const { spawn } = require('child_process');
+const { spawn, exec } = require('child_process');
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const NodeMediaServer = require('node-media-server');
@@ -202,6 +202,43 @@ const nms = new NodeMediaServer({
   },
 });
 const thumbTimers = new Map();
+
+// --- Limpieza de transmuxers ffmpeg huérfanos (solo Linux/EC2) ---
+function ffmpegCmd(cmd) {
+  if (process.platform !== 'linux') return;
+  exec(cmd, () => {}); // sin errores fatales: puede no haber procesos
+}
+function killTransFfmpeg(username) {
+  // El transmuxer del muxer "tee" es el que escribe index.m3u8
+  ffmpegCmd(`pkill -9 -f "media/live/${username}/[i]ndex.m3u8"`);
+}
+// Al arrancar no debe quedar ningún ffmpeg de sesiones anteriores
+ffmpegCmd(`pkill -9 -f "rtmp://127.0.0.1:${RTMP_PORT}/[l]ive/"`);
+// Vigía: si un canal tiene más de un transmuxer, deja solo el más reciente
+setInterval(() => {
+  if (process.platform !== 'linux') return;
+  exec('ps -eo pid=,args=', (err, out) => {
+    if (err) return;
+    const byUser = new Map();
+    for (const line of String(out).split('\n')) {
+      const m = line.match(/^\s*(\d+)\s+(.*)$/);
+      if (!m) continue;
+      const u = m[2].match(/media\/live\/([a-z0-9_]+)\/index\.m3u8/);
+      if (u && m[2].includes('-f tee')) {
+        if (!byUser.has(u[1])) byUser.set(u[1], []);
+        byUser.get(u[1]).push(Number(m[1]));
+      }
+    }
+    for (const [, pids] of byUser) {
+      if (pids.length > 1) {
+        pids.sort((a, b) => b - a);
+        pids.slice(1).forEach((pid) => { try { process.kill(pid, 'SIGKILL'); } catch { /* ya murió */ } });
+        console.log(`[Limpieza] ${pids.length - 1} transmuxer(es) huérfano(s) eliminados`);
+      }
+    }
+  });
+}, 60000);
+
 function snapshot(username) {
   const out = path.join(MEDIA, 'live', username, 'thumb.jpg');
   // stdio ignore + kill de seguridad: evita hijos colgados que consuman recursos
@@ -215,6 +252,7 @@ nms.on('prePublish', (id, streamPath, args) => {
     console.log(`[RTMP] Rechazado ${streamPath} (clave inválida)`);
     return nms.getSession(id).reject();
   }
+  killTransFfmpeg(username); // si ya había un emisor anterior, su transmuxer queda huérfano
   console.log(`[RTMP] ${username} inició transmisión`);
 });
 nms.on('postPublish', (_id, streamPath) => {
