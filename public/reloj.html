@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Reloj · StreamLab</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  #t { color: #39ff5a; font-family: ui-monospace, Consolas, monospace;
+       font-size: 150px; font-weight: 700; display: grid; place-items: center; height: 100%;
+       text-shadow: 0 0 18px rgba(57,255,90,.55); letter-spacing: 6px; }
+</style>
+</head>
+<body>
+<div id="t">--:--:--</div>
+<script>
+  function tick() {
+    const d = new Date();
+    const p = n => String(n).padStart(2, '0');
+    document.getElementById('t').textContent =
+      p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+  }
+  tick();
+  setInterval(tick, 250);
+</script>
+</body>
+</html>
