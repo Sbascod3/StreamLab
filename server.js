@@ -204,7 +204,9 @@ const nms = new NodeMediaServer({
 const thumbTimers = new Map();
 function snapshot(username) {
   const out = path.join(MEDIA, 'live', username, 'thumb.jpg');
-  spawn(FFMPEG, ['-y', '-loglevel', 'error', '-i', `rtmp://127.0.0.1:${RTMP_PORT}/live/${username}`, '-frames:v', '1', '-vf', 'scale=480:-2', out]);
+  // stdio ignore + kill de seguridad: evita hijos colgados que consuman recursos
+  const proc = spawn(FFMPEG, ['-y', '-loglevel', 'error', '-i', `rtmp://127.0.0.1:${RTMP_PORT}/live/${username}`, '-frames:v', '1', '-vf', 'scale=480:-2', out], { stdio: 'ignore' });
+  setTimeout(() => { try { proc.kill(); } catch { /* ya terminó */ } }, 15000);
 }
 nms.on('prePublish', (id, streamPath, args) => {
   const [, appName, username] = streamPath.split('/');
@@ -220,7 +222,12 @@ nms.on('postPublish', (_id, streamPath) => {
   db.prepare('UPDATE users SET is_live = 1 WHERE username = ?').run(username);
   io.emit('live', { username, live: true });
   setTimeout(() => snapshot(username), 3000);
-  thumbTimers.set(username, setInterval(() => snapshot(username), 30000));
+  // Intervalo de miniaturas: 30 s por defecto (spec); 0 las desactiva (pruebas)
+  const THUMB_EVERY = Number(process.env.THUMB_EVERY || 30000);
+  if (THUMB_EVERY > 0) {
+    clearInterval(thumbTimers.get(username)); // no acumular intervalos si retransmite
+    thumbTimers.set(username, setInterval(() => snapshot(username), THUMB_EVERY));
+  }
 });
 nms.on('donePublish', (_id, streamPath) => {
   const username = streamPath.split('/')[2];
